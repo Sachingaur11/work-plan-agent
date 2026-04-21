@@ -1,0 +1,8 @@
+anthropic
+python-dotenv
+httpx
+fastapi
+uvicorn[standard]
+supabase
+python-multipart
+pydantic[email]
