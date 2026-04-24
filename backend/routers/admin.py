@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
-from ..models import UserRoleUpdate, AssignClientRequest, UserProfileResponse
-from ..services.supabase_client import get_supabase
+from models import UserRoleUpdate, AssignClientRequest, UserProfileResponse
+from services.supabase_client import get_supabase
+from services import agent_handler
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -64,3 +65,34 @@ async def remove_client_from_project(project_id: str, client_id: str, request: R
     sb = get_supabase()
     sb.table("client_project_access").delete().eq("project_id", project_id).eq("client_id", client_id).execute()
     return {"status": "removed"}
+
+
+# ── Agent version management ──────────────────────────────────────────────────
+
+@router.get("/agents/stages/versions")
+async def get_stage_versions(request: Request):
+    """Return current version availability config for all pipeline stages."""
+    _require_admin(request)
+    return agent_handler.get_all_stage_versions()
+
+
+@router.post("/agents/stages/{stage_number}/versions/{version}/enable")
+async def enable_agent_version(stage_number: int, version: int, request: Request):
+    """Enable an agent version for a pipeline stage (makes it selectable in the UI)."""
+    _require_admin(request)
+    try:
+        agent_handler.enable_version(stage_number, version)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return agent_handler.get_all_stage_versions()[stage_number]
+
+
+@router.delete("/agents/stages/{stage_number}/versions/{version}")
+async def disable_agent_version(stage_number: int, version: int, request: Request):
+    """Disable an agent version for a pipeline stage (hides it from the UI)."""
+    _require_admin(request)
+    try:
+        agent_handler.disable_version(stage_number, version)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return agent_handler.get_all_stage_versions()[stage_number]

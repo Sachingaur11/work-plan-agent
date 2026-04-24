@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
-from ..services.supabase_client import get_supabase
-from ..services.pipeline_service import get_signed_url
+from services.supabase_client import get_supabase
+from services.pipeline_service import get_signed_url
 
 router = APIRouter(tags=["files"])
 

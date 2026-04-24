@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# production build artifacts (if any)
+dist/
+build/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# runtime / misc
+.DS_Store
+*.tsbuildinfo
+
+# env files (DO NOT COMMIT)
+.env
+.env.*
+!.env.example
+
+# testing / coverage
+coverage/
+
+# vercel / deploy tooling
+.vercel/
+
+# turborepo (if introduced later)
+.turbo/
+
+# editor
+.vscode/
+.idea/

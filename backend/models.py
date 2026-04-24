@@ -13,6 +13,13 @@ class ProjectCreate(BaseModel):
     transcript: Optional[str] = None  # pasted text
 
 
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    client_name: Optional[str] = None
+    client_email: Optional[EmailStr] = None
+    transcript: Optional[str] = None  # updating transcript allows re-running stage 1 with new input
+
+
 class ProjectResponse(BaseModel):
     id: str
     name: str
@@ -29,6 +36,17 @@ class ProjectResponse(BaseModel):
 class RunPipelineRequest(BaseModel):
     stage_number: int  # 1, 2, or 3
     rerun: bool = False  # true = re-run same stage with feedback
+    agent_version: Optional[int] = None  # pin to a specific agent version (1–5); None = use latest
+
+
+class RegenerateFilesRequest(BaseModel):
+    file_names: list[str]  # filenames to regenerate; empty list = regenerate all stage outputs
+    instructions: str      # user instructions injected into the agent message
+    agent_version: Optional[int] = None  # optional version pin, same as RunPipelineRequest
+
+
+class VerifyDownloadRequest(BaseModel):
+    session_id: Optional[str] = None  # provide manually if the DB row has no session_id stored
 
 
 class PipelineStageResponse(BaseModel):
@@ -102,6 +120,19 @@ class UserRoleUpdate(BaseModel):
 
 class AssignClientRequest(BaseModel):
     client_id: str
+
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+class ChatHistoryItem(BaseModel):
+    role: str     # 'user' | 'assistant'
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    stage_number: int
+    history: list[ChatHistoryItem] = []
 
 
 class UserProfileResponse(BaseModel):

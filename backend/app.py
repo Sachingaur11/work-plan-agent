@@ -5,17 +5,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .routers import projects, pipeline, feedback, approvals, files, admin
-from .services.supabase_client import get_supabase
+from routers import projects, pipeline, feedback, approvals, files, admin, chat
+from routers.pipeline import agents_router
+from services.supabase_client import get_supabase
 
 app = FastAPI(title="Presale Agent Dashboard API", version="1.0.0")
 
 _frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-_allowed_origins = [o.strip() for o in _frontend_url.split(",") if o.strip()]
+# Strip trailing slashes so origins match exactly what browsers send
+_allowed_origins = [o.strip().rstrip("/") for o in _frontend_url.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    # Regex covers any localhost port (3000, 3001, etc.) for local development
+    allow_origin_regex=r"http://localhost:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,10 +70,12 @@ async def attach_user(request: Request, call_next):
 
 app.include_router(projects.router)
 app.include_router(pipeline.router)
+app.include_router(agents_router)
 app.include_router(feedback.router)
 app.include_router(approvals.router)
 app.include_router(files.router)
 app.include_router(admin.router)
+app.include_router(chat.router)
 
 
 @app.get("/health")

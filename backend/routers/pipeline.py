@@ -3,9 +3,10 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import json
 
-from ..models import RunPipelineRequest
-from ..services.supabase_client import get_supabase
-from ..services import pipeline_service
+from models import RunPipelineRequest, RegenerateFilesRequest, VerifyDownloadRequest
+from services.supabase_client import get_supabase
+from services import pipeline_service
+from services.agent_handler import get_all_stage_versions
 
 router = APIRouter(prefix="/projects", tags=["pipeline"])
 
@@ -21,10 +22,33 @@ def _notify_sse(project_id: str, payload: dict):
             pass
 
 
-def _run_stage_background(project_id: str, stage_number: int, feedback_comments: list[str]):
+def _run_stage_background(
+    project_id: str,
+    stage_number: int,
+    feedback_comments: list[str],
+    agent_version: int | None,
+):
     """Blocking call — runs in threadpool via BackgroundTasks."""
     try:
-        stage = pipeline_service.run_stage(project_id, stage_number, feedback_comments or None)
+        stage = pipeline_service.run_stage(
+            project_id, stage_number, feedback_comments or None, agent_version
+        )
+        _notify_sse(project_id, {"type": "stage_complete", "stage": stage})
+    except Exception as exc:
+        _notify_sse(project_id, {"type": "stage_error", "stage_number": stage_number, "error": str(exc)})
+
+
+def _regenerate_background(
+    project_id: str,
+    stage_number: int,
+    file_names: list[str],
+    instructions: str,
+    agent_version: int | None,
+):
+    try:
+        stage = pipeline_service.regenerate_files(
+            project_id, stage_number, file_names, instructions, agent_version
+        )
         _notify_sse(project_id, {"type": "stage_complete", "stage": stage})
     except Exception as exc:
         _notify_sse(project_id, {"type": "stage_error", "stage_number": stage_number, "error": str(exc)})
@@ -73,35 +97,113 @@ async def run_pipeline(
         )
         feedback_comments = [r["content"] for r in fb.data]
 
-    background_tasks.add_task(_run_stage_background, project_id, stage_number, feedback_comments)
+    background_tasks.add_task(
+        _run_stage_background, project_id, stage_number, feedback_comments, body.agent_version
+    )
     return {"status": "started", "stage_number": stage_number}
 
 
-@router.post("/{project_id}/stages/{stage_number}/verify-download")
-async def verify_download(project_id: str, stage_number: int, request: Request, background_tasks: BackgroundTasks):
+@router.post("/{project_id}/stages/{stage_number}/regenerate")
+async def regenerate_stage_files(
+    project_id: str,
+    stage_number: int,
+    body: RegenerateFilesRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     """
-    Re-download output files from the existing Anthropic session for a stage.
-    Use when a stage shows 'failed' or documents are missing despite the agent having run.
+    Regenerate selected (or all) output files for a completed stage using
+    targeted instructions. Creates a new pipeline version row; only the
+    targeted filenames are superseded.
     """
     sb = get_supabase()
 
-    # Get the latest stage row that has a session ID
-    stage_row = (
+    project = sb.table("projects").select("status").eq("id", project_id).single().execute()
+    if not project.data:
+        raise HTTPException(404, "Project not found")
+
+    # Stage must have been run at least once
+    existing = (
         sb.table("pipeline_stages")
-        .select("*")
+        .select("id")
         .eq("project_id", project_id)
         .eq("stage_number", stage_number)
-        .not_.is_("anthropic_session_id", "null")
-        .order("version", desc=True)
         .limit(1)
         .execute()
     )
-    if not stage_row.data:
-        raise HTTPException(404, "No session found for this stage — run the stage first")
+    if not existing.data:
+        raise HTTPException(400, f"Stage {stage_number} has not been run yet")
 
-    stage = stage_row.data[0]
-    if not stage.get("anthropic_session_id"):
-        raise HTTPException(400, "Stage has no Anthropic session ID to download from")
+    if not body.instructions.strip():
+        raise HTTPException(400, "instructions must not be empty")
+
+    background_tasks.add_task(
+        _regenerate_background,
+        project_id,
+        stage_number,
+        body.file_names,
+        body.instructions,
+        body.agent_version,
+    )
+    return {"status": "started", "stage_number": stage_number, "target_files": body.file_names or "all"}
+
+
+@router.post("/{project_id}/stages/{stage_number}/verify-download")
+async def verify_download(
+    project_id: str,
+    stage_number: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    body: VerifyDownloadRequest = VerifyDownloadRequest(),
+):
+    """
+    Re-download output files from the existing Anthropic session for a stage.
+    Use when a stage shows 'failed' or documents are missing despite the agent having run.
+
+    If the stage row has no stored session_id (e.g. an old failure before the fix),
+    pass the session_id manually in the request body.
+    """
+    sb = get_supabase()
+
+    if body.session_id:
+        # Caller supplied a session_id manually — find the most recent stage row
+        # regardless of whether it has a session_id stored.
+        stage_row = (
+            sb.table("pipeline_stages")
+            .select("*")
+            .eq("project_id", project_id)
+            .eq("stage_number", stage_number)
+            .order("version", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not stage_row.data:
+            raise HTTPException(404, "No stage row found — run the stage first")
+        stage = stage_row.data[0]
+        # Store the manually-supplied session_id so future verify-download calls work
+        sb.table("pipeline_stages").update(
+            {"anthropic_session_id": body.session_id}
+        ).eq("id", stage["id"]).execute()
+        stage["anthropic_session_id"] = body.session_id
+    else:
+        # Normal path: find the latest stage row that already has a session_id
+        stage_row = (
+            sb.table("pipeline_stages")
+            .select("*")
+            .eq("project_id", project_id)
+            .eq("stage_number", stage_number)
+            .not_.is_("anthropic_session_id", "null")
+            .order("version", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not stage_row.data:
+            raise HTTPException(
+                404,
+                "No session found for this stage. If the stage ran but failed before "
+                "the session_id was saved, supply the session_id in the request body.",
+            )
+        stage = stage_row.data[0]
 
     background_tasks.add_task(_verify_download_background, project_id, stage_number, stage)
     return {"status": "verifying", "session_id": stage["anthropic_session_id"]}
@@ -109,7 +211,7 @@ async def verify_download(project_id: str, stage_number: int, request: Request, 
 
 def _verify_download_background(project_id: str, stage_number: int, stage: dict):
     """Re-download files from an existing session and update DB/storage."""
-    from ..services.pipeline_service import (
+    from services.pipeline_service import (
         _download_session_files, _upload_to_storage, STAGE_META,
     )
     from datetime import datetime, timezone
@@ -201,3 +303,17 @@ async def pipeline_status_stream(project_id: str, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Agent version info (global, not per-project) ──────────────────────────────
+
+agents_router = APIRouter(tags=["agents"])
+
+
+@agents_router.get("/agents/versions")
+async def get_agent_versions():
+    """
+    Return available version info for all three pipeline stages.
+    Shape: { 1: { available: [1,2], max_versions: 5 }, ... }
+    """
+    return get_all_stage_versions()

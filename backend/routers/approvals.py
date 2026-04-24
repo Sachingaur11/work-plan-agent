@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
-from ..models import ApprovalCreate, ApprovalResponse
-from ..services.supabase_client import get_supabase
+from models import ApprovalCreate, ApprovalResponse
+from services.supabase_client import get_supabase
 
 router = APIRouter(tags=["approvals"])
 

@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Form
 from typing import Optional
-from ..models import ProjectCreate, ProjectResponse
-from ..services.supabase_client import get_supabase
-from ..services.pipeline_service import _storage_path, _mime_for, BUCKET
+from models import ProjectCreate, ProjectUpdate, ProjectResponse
+from services.supabase_client import get_supabase
+from services.pipeline_service import _mime_for, BUCKET
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -82,6 +82,60 @@ async def get_project(project_id: str, request: Request):
     if not result.data:
         raise HTTPException(404, "Project not found")
     return result.data
+
+
+@router.patch("/{project_id}", response_model=ProjectResponse)
+async def update_project(project_id: str, body: ProjectUpdate, request: Request):
+    user_id = _get_user_id(request)
+    role = _get_user_role(request)
+    sb = get_supabase()
+
+    project = sb.table("projects").select("created_by").eq("id", project_id).single().execute()
+    if not project.data:
+        raise HTTPException(404, "Project not found")
+    if role != "admin" and project.data["created_by"] != user_id:
+        raise HTTPException(403, "Not authorized to edit this project")
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+
+    result = sb.table("projects").update(updates).eq("id", project_id).execute()
+    return result.data[0]
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(project_id: str, request: Request):
+    user_id = _get_user_id(request)
+    role = _get_user_role(request)
+    sb = get_supabase()
+
+    project = sb.table("projects").select("*").eq("id", project_id).single().execute()
+    if not project.data:
+        raise HTTPException(404, "Project not found")
+    if role != "admin" and project.data["created_by"] != user_id:
+        raise HTTPException(403, "Not authorized to delete this project")
+
+    # Collect all storage paths for this project and delete them
+    docs = sb.table("documents").select("storage_path").eq("project_id", project_id).execute()
+    paths_to_delete = [d["storage_path"] for d in docs.data]
+    if project.data.get("transcript_file_path"):
+        paths_to_delete.append(project.data["transcript_file_path"])
+    if paths_to_delete:
+        try:
+            sb.storage.from_(BUCKET).remove(paths_to_delete)
+        except Exception:
+            pass  # Storage cleanup is best-effort; proceed with DB deletion
+
+    # Delete child rows in dependency order
+    sb.table("documents").delete().eq("project_id", project_id).execute()
+    sb.table("pipeline_stages").delete().eq("project_id", project_id).execute()
+    sb.table("feedback").delete().eq("project_id", project_id).execute()
+    sb.table("approvals").delete().eq("project_id", project_id).execute()
+    sb.table("client_project_access").delete().eq("project_id", project_id).execute()
+    sb.table("projects").delete().eq("id", project_id).execute()
+
+    return Response(status_code=204)
 
 
 @router.get("/{project_id}/stages")

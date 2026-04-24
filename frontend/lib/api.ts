@@ -43,6 +43,31 @@ export async function createProject(data: FormData) {
   return res.json();
 }
 
+export async function updateProject(id: string, data: {
+  name?: string;
+  client_name?: string | null;
+  client_email?: string | null;
+  transcript?: string | null;
+}) {
+  return apiFetch(`/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteProject(id: string) {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/projects/${id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  // 204 No Content — no body to parse
+}
+
 export async function getProjectStages(projectId: string) {
   return apiFetch(`/projects/${projectId}/stages`);
 }
@@ -53,10 +78,32 @@ export async function getStageDocuments(projectId: string, stage: number) {
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
-export async function runPipeline(projectId: string, stage_number: number, rerun = false) {
+export async function runPipeline(
+  projectId: string,
+  stage_number: number,
+  rerun = false,
+  agentVersion?: number,
+) {
   return apiFetch(`/projects/${projectId}/pipeline/run`, {
     method: "POST",
-    body: JSON.stringify({ stage_number, rerun }),
+    body: JSON.stringify({ stage_number, rerun, agent_version: agentVersion ?? null }),
+  });
+}
+
+export async function regenerateFiles(
+  projectId: string,
+  stageNumber: number,
+  fileNames: string[],
+  instructions: string,
+  agentVersion?: number,
+) {
+  return apiFetch(`/projects/${projectId}/stages/${stageNumber}/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({
+      file_names: fileNames,
+      instructions,
+      agent_version: agentVersion ?? null,
+    }),
   });
 }
 
@@ -113,6 +160,26 @@ export async function listApprovals(projectId: string, stage: number) {
   return apiFetch(`/projects/${projectId}/stages/${stage}/approve`);
 }
 
+// ── Agent versions ────────────────────────────────────────────────────────────
+
+export async function getAgentVersions(): Promise<
+  Record<number, { available: number[]; max_versions: number }>
+> {
+  return apiFetch("/agents/versions");
+}
+
+export async function enableAgentVersion(stageNumber: number, version: number) {
+  return apiFetch(`/admin/agents/stages/${stageNumber}/versions/${version}/enable`, {
+    method: "POST",
+  });
+}
+
+export async function disableAgentVersion(stageNumber: number, version: number) {
+  return apiFetch(`/admin/agents/stages/${stageNumber}/versions/${version}`, {
+    method: "DELETE",
+  });
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 export async function listUsers() {
@@ -137,4 +204,51 @@ export async function removeClientFromProject(projectId: string, clientId: strin
   return apiFetch(`/admin/projects/${projectId}/assign-client/${clientId}`, {
     method: "DELETE",
   });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export async function* streamChat(
+  projectId: string,
+  message: string,
+  stageNumber: number,
+  history: ChatMessage[],
+): AsyncGenerator<string> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ message, stage_number: stageNumber, history }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.text) yield parsed.text;
+        if (parsed.error) throw new Error(parsed.error);
+      } catch (e) {
+        if (e instanceof Error && e.message !== "Unexpected end of JSON input") throw e;
+      }
+    }
+  }
 }
