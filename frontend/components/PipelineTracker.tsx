@@ -15,7 +15,7 @@ interface Props {
   onStageClick: (n: number) => void;
 }
 
-const STAGE_NAMES = ["Questionnaire", "Scope of Work", "Dev Plan & Costing"];
+const STAGE_NAMES = ["Questionnaire", "Scope of Work", "Dev Plan & Costing", "Role-based Dev Plans"];
 
 function StageIcon({ status }: { status: string }) {
   switch (status) {
@@ -35,7 +35,7 @@ export default function PipelineTracker({ stages, activeStage, onStageClick }: P
 
   return (
     <div className="flex items-center gap-0">
-      {[1, 2, 3].map((n, i) => {
+      {[1, 2, 3, 4].map((n, i) => {
         const stage = stageMap[n];
         const status = stage?.status ?? "pending";
         const active = activeStage === n;
@@ -63,7 +63,7 @@ export default function PipelineTracker({ stages, activeStage, onStageClick }: P
                 <p className="text-xs text-slate-500">{STAGE_NAMES[n - 1]}</p>
               </div>
             </button>
-            {i < 2 && (
+            {i < 3 && (
               <div className={cn("w-8 h-0.5 mx-1", status === "complete" ? "bg-emerald-300" : "bg-slate-200")} />
             )}
           </div>

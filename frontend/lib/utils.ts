@@ -29,4 +29,5 @@ export const STAGE_NAMES: Record<number, string> = {
   1: "Questionnaire",
   2: "Scope of Work",
   3: "Dev Plan & Costing",
+  4: "Role-based Dev Plans",
 };

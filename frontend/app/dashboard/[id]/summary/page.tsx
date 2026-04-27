@@ -27,13 +27,13 @@ export default function ProjectSummaryPage() {
     Promise.all([getProject(id), getProjectStages(id)]).then(([proj, stgs]) => {
       setProject(proj);
       setStages(stgs);
-      // Only redirect if stage 3 has never been run — summary has nothing to show.
+      // Only redirect if stage 4 has never been run — summary has nothing to show.
       // We intentionally allow access when status is "awaiting_review" (e.g. after
-      // a stage 2 regeneration) so the user can still review the existing outputs.
-      const hasStage3 = (stgs as Record<string, unknown>[]).some(
-        (s) => s.stage_number === 3
+      // a regeneration) so the user can still review the existing outputs.
+      const hasStage4 = (stgs as Record<string, unknown>[]).some(
+        (s) => s.stage_number === 4
       );
-      if (!hasStage3) router.replace(`/dashboard/${id}`);
+      if (!hasStage4) router.replace(`/dashboard/${id}`);
     });
   }, [id, router]);
 

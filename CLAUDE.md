@@ -45,6 +45,7 @@ There are no automated tests (no pytest, Jest, or Cypress configured).
 | `AGENT_ID_1` | Stage 1 presales agent |
 | `SOW_AGENT_ID` | Stage 2 scope-of-work agent |
 | `DEV_PLAN_AGENT_ID` | Stage 3 development plan agent |
+| `DEVPLAN_ROLES_AGENT_ID` | Stage 4 role-based dev plans agent |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (bypasses RLS) |
 | `FRONTEND_URL` | Frontend origin for CORS (default: `http://localhost:3000`) |
@@ -62,6 +63,7 @@ There are no automated tests (no pytest, Jest, or Cypress configured).
 Run migrations in order in the Supabase SQL editor:
 1. `supabase/migrations/001_init.sql` — all base tables, RLS policies
 2. `supabase/migrations/002_agent_versioning.sql` — adds `agent_version INTEGER` column to `pipeline_stages`
+3. `supabase/migrations/003_stage4_support.sql` — widens `stage_number` CHECK from `(1,2,3)` to `(1,2,3,4)`
 
 Create a Supabase Storage bucket named **`presale-outputs`** (private).
 
@@ -88,6 +90,8 @@ Stage 1: Presale Agent → 01_questionnaire.md, context_v1_intake.json
 Stage 2: SOW Agent (mounts Stage 1 files) → 02_scope_of_work.md, .docx, context_v2_sow.json
         ↓ (presales approves → switches to Stage 3 tab, user manually runs)
 Stage 3: Dev Plan Agent (mounts Stage 2 files) → 03_development_plan_and_costing.xlsx, context_v3_development_plan.json
+        ↓ (presales approves → switches to Stage 4 tab, user manually runs)
+Stage 4: Roles Agent (mounts 02_scope_of_work.md from Stage 2 + xlsx + context json from Stage 3) → 04_devplan_pm.md, 04_devplan_dev.md, 04_devplan_qa.md
         ↓ (presales approves → navigates to /summary)
 ```
 
@@ -104,6 +108,9 @@ Individual files (any type) can be regenerated without re-running the whole stag
 - `backend/routers/pipeline.py` — background task triggers for `run_stage` / `regenerate_files`; SSE endpoint for live status; `POST /{id}/stages/{n}/verify-download` re-downloads files from an existing Anthropic session (accepts optional `session_id` body to recover sessions where the ID wasn't saved due to early failure); `GET /agents/versions`.
 - `backend/routers/projects.py` — CRUD for projects including `PATCH /{id}` (partial update, `exclude_unset=True`) and `DELETE /{id}` (deletes Storage files from documents table paths, then cascades through all child tables in dependency order).
 - `backend/routers/admin.py` — user management + `GET/POST/DELETE /admin/agents/stages/{stage}/versions/{version}` for version gating.
+- `backend/routers/chat.py` — `POST /projects/{id}/chat` streaming SSE endpoint. Builds a rich system prompt by parallel-fetching project, stages, documents, approvals, and feedback from Supabase; downloads `.md`/`.json` doc contents (truncated at 4000 chars); streams Claude (`claude-sonnet-4-6`) responses as `{"text": "..."}` SSE events, terminated by `[DONE]`.
+- `backend/routers/approvals.py` — `POST/GET /projects/{id}/stages/{n}/approve`; updates project status on approval (stage 3 approved → `complete`).
+- `backend/routers/files.py` — `GET /documents/{id}/download` returns signed URL; blocks clients from downloading context files.
 - `backend/app.py` — JWT auth middleware attaches `user_id` + `user_role` to `request.state`; CORS.
 - `backend/models.py` — all Pydantic schemas. `VerifyDownloadRequest` has optional `session_id` for manual recovery.
 
@@ -116,7 +123,7 @@ Individual files (any type) can be regenerated without re-running the whole stag
   - `effectiveDecision` detects stale approvals: if `approval.created_at < stage.started_at`, the approval predates the current run and is treated as `undefined` so the ApprovalBar shows action buttons again.
   - `startPolling(stage, fromVersion)` only stops when a version **newer than `fromVersion`** is complete/failed — prevents the old complete row from killing the poll before the background task creates the new running row.
   - Running label is context-aware: "Running…" / "Re-running…" / "Regenerating…".
-- `frontend/app/dashboard/[id]/summary/page.tsx` — accessible whenever stage 3 has been run (not gated on `status === "complete"`). Redirects away only if stage 3 has never run.
+- `frontend/app/dashboard/[id]/summary/page.tsx` — accessible whenever stage 4 has been run (not gated on `status === "complete"`). Redirects away only if stage 4 has never run.
 - `frontend/app/auth/callback/route.ts` — server-side OAuth callback for Supabase Google SSO.
 - `frontend/app/admin/` — user role management, client-project assignment, agent version enable/disable UI.
 - `frontend/components/EditProjectModal.tsx` — edit project name, client info, transcript (transcript section is collapsible; editing it allows re-running Stage 1 with new input).
@@ -124,6 +131,10 @@ Individual files (any type) can be regenerated without re-running the whole stag
 - `frontend/components/ApprovalBar.tsx` — when `currentDecision === "approved"` shows static badge; otherwise shows Approve / Request Revision / Reject. Receives `effectiveDecision` (not raw latest approval) so stale approvals don't block re-approval after regeneration.
 - `frontend/components/AgentVersionSelector.tsx` — pill picker (Default + V1–V5); only admin-enabled versions clickable.
 - `frontend/components/DocumentViewer.tsx` — per-file regenerate button shown on **all** file types (not filtered by `is_context_file`).
+- `frontend/components/StageChat.tsx` — floating chat panel per stage; streams from `POST /projects/{id}/chat`; reads SSE `{"text": "..."}` chunks and appends to the current assistant message.
+- `frontend/app/client/[projectId]/page.tsx` — read-only client portal; shows only approved-stage documents; uses `ClientDownloads` for file access. Clients cannot see context files.
+- `frontend/lib/supabase/client.ts` + `server.ts` — browser and server Supabase client factories (Next.js App Router split).
+- `frontend/lib/utils.ts` — shared constants: `STATUS_LABELS` (display names), `STATUS_COLORS` (Tailwind badge classes), `STAGE_NAMES` (stage number → title map), and the `cn()` Tailwind merge helper.
 
 ### User Roles
 

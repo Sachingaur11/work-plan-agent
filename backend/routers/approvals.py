@@ -29,7 +29,9 @@ async def create_approval(
     }).execute()
 
     # Update project status based on decision
-    if body.decision == "approved" and stage_number == 3:
+    # "complete" only when the final stage (4) is approved — all prior approvals
+    # leave the project in awaiting_review so stage 4 can still run.
+    if body.decision == "approved" and stage_number == 4:
         new_status = "complete"
     elif body.decision == "approved":
         new_status = "awaiting_review"

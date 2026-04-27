@@ -63,6 +63,31 @@ STAGE_META = {
             "in /mnt/session/outputs/."
         ),
     },
+    4: {
+        "name": "Role-based Dev Plans",
+        "agent_env_var": "DEVPLAN_ROLES_AGENT_ID",
+        "title": "devplan-roles-generation",
+        # Inputs span two stages: 02_scope_of_work.md from stage 2,
+        # xlsx + context json from stage 3.
+        "input_stages": {
+            2: ["02_scope_of_work.md"],
+            3: ["03_development_plan_and_costing.xlsx", "context_v3_development_plan.json"],
+        },
+        "input_files": [
+            "02_scope_of_work.md",
+            "03_development_plan_and_costing.xlsx",
+            "context_v3_development_plan.json",
+        ],
+        "outputs": ["04_devplan_pm.md", "04_devplan_dev.md", "04_devplan_qa.md"],
+        "context_files": [],
+        "message": (
+            "Read the input files from /mnt/session/uploads/, then produce three "
+            "role-specific development plan documents in /mnt/session/outputs/: "
+            "04_devplan_pm.md (Project Manager view), "
+            "04_devplan_dev.md (Developer view), "
+            "04_devplan_qa.md (QA view)."
+        ),
+    },
 }
 
 
@@ -235,7 +260,6 @@ def run_stage(
     """
     sb = get_supabase()
     meta = STAGE_META[stage_number]
-    agent_id = os.environ[meta["agent_env_var"]]
 
     # Determine version (next after existing)
     existing = (
@@ -249,7 +273,9 @@ def run_stage(
     )
     version = (existing.data[0]["version"] + 1) if existing.data else 1
 
-    # Insert pipeline_stage row (status=running)
+    # Insert pipeline_stage row (status=running) BEFORE any env/API calls so
+    # that a failure anywhere in the try block creates a visible "failed" row
+    # that polling can detect — rather than leaving the UI stuck on "Running…".
     stage_row = (
         sb.table("pipeline_stages")
         .insert({
@@ -269,6 +295,15 @@ def run_stage(
     sb.table("projects").update({"status": "running"}).eq("id", project_id).execute()
 
     try:
+        # Resolve agent ID inside the try block so a missing env var surfaces as
+        # a "failed" stage row rather than a silent background-task crash.
+        agent_id = os.environ.get(meta["agent_env_var"])
+        if not agent_id:
+            raise ValueError(
+                f"Environment variable '{meta['agent_env_var']}' is not set. "
+                f"Add it to your .env file and restart the server."
+            )
+
         resources = []
 
         if stage_number == 1:
@@ -290,26 +325,41 @@ def run_stage(
                 raise ValueError("Project has no transcript")
 
         else:
-            # Fetch output files from previous stage (latest version)
-            prev_stage = stage_number - 1
-            prev_docs = (
-                sb.table("documents")
-                .select("*")
-                .eq("project_id", project_id)
-                .eq("stage_number", prev_stage)
-                .eq("is_latest", True)
-                .execute()
-            ).data
+            # Collect input files — either from multiple named stages or from prev stage only
+            collected: dict[str, bytes] = {}
+            if "input_stages" in meta:
+                for src_stage, filenames in meta["input_stages"].items():
+                    src_docs = (
+                        sb.table("documents")
+                        .select("*")
+                        .eq("project_id", project_id)
+                        .eq("stage_number", src_stage)
+                        .eq("is_latest", True)
+                        .execute()
+                    ).data
+                    src_files = {d["filename"]: _download_from_storage(d["storage_path"]) for d in src_docs}
+                    for filename in filenames:
+                        if filename not in src_files:
+                            raise RuntimeError(f"Stage {src_stage} did not produce {filename}")
+                        collected[filename] = src_files[filename]
+            else:
+                prev_stage = stage_number - 1
+                prev_docs = (
+                    sb.table("documents")
+                    .select("*")
+                    .eq("project_id", project_id)
+                    .eq("stage_number", prev_stage)
+                    .eq("is_latest", True)
+                    .execute()
+                ).data
+                for doc in prev_docs:
+                    collected[doc["filename"]] = _download_from_storage(doc["storage_path"])
+                for filename in meta["input_files"]:
+                    if filename not in collected:
+                        raise RuntimeError(f"Stage {prev_stage} did not produce {filename}")
 
-            prev_files: dict[str, bytes] = {}
-            for doc in prev_docs:
-                content = _download_from_storage(doc["storage_path"])
-                prev_files[doc["filename"]] = content
-
-            for filename in meta["input_files"]:
-                if filename not in prev_files:
-                    raise RuntimeError(f"Stage {prev_stage} did not produce {filename}")
-                file_id = _upload_to_anthropic(filename, prev_files[filename])
+            for filename, content in collected.items():
+                file_id = _upload_to_anthropic(filename, content)
                 resources.append({
                     "type": "file",
                     "file_id": file_id,
@@ -416,7 +466,6 @@ def regenerate_files(
     """
     sb = get_supabase()
     meta = STAGE_META[stage_number]
-    agent_id = os.environ[meta["agent_env_var"]]
 
     # Target files: default to all stage outputs when none specified
     target_files: list[str] = file_names if file_names else list(meta["outputs"])
@@ -433,7 +482,7 @@ def regenerate_files(
     )
     version = (existing.data[0]["version"] + 1) if existing.data else 1
 
-    # Insert pipeline_stage row (status=running)
+    # Insert pipeline_stage row (status=running) BEFORE any env/API calls
     stage_row = (
         sb.table("pipeline_stages")
         .insert({
@@ -452,6 +501,13 @@ def regenerate_files(
     sb.table("projects").update({"status": "running"}).eq("id", project_id).execute()
 
     try:
+        agent_id = os.environ.get(meta["agent_env_var"])
+        if not agent_id:
+            raise ValueError(
+                f"Environment variable '{meta['agent_env_var']}' is not set. "
+                f"Add it to your .env file and restart the server."
+            )
+
         resources = []
 
         if stage_number == 1:
@@ -470,23 +526,40 @@ def regenerate_files(
             else:
                 raise ValueError("Project has no transcript")
         else:
-            prev_stage = stage_number - 1
-            prev_docs = (
-                sb.table("documents")
-                .select("*")
-                .eq("project_id", project_id)
-                .eq("stage_number", prev_stage)
-                .eq("is_latest", True)
-                .execute()
-            ).data
-            prev_files: dict[str, bytes] = {}
-            for doc in prev_docs:
-                content = _download_from_storage(doc["storage_path"])
-                prev_files[doc["filename"]] = content
-            for filename in meta["input_files"]:
-                if filename not in prev_files:
-                    raise RuntimeError(f"Stage {prev_stage} did not produce {filename}")
-                file_id = _upload_to_anthropic(filename, prev_files[filename])
+            collected_regen: dict[str, bytes] = {}
+            if "input_stages" in meta:
+                for src_stage, filenames in meta["input_stages"].items():
+                    src_docs = (
+                        sb.table("documents")
+                        .select("*")
+                        .eq("project_id", project_id)
+                        .eq("stage_number", src_stage)
+                        .eq("is_latest", True)
+                        .execute()
+                    ).data
+                    src_files = {d["filename"]: _download_from_storage(d["storage_path"]) for d in src_docs}
+                    for filename in filenames:
+                        if filename not in src_files:
+                            raise RuntimeError(f"Stage {src_stage} did not produce {filename}")
+                        collected_regen[filename] = src_files[filename]
+            else:
+                prev_stage = stage_number - 1
+                prev_docs = (
+                    sb.table("documents")
+                    .select("*")
+                    .eq("project_id", project_id)
+                    .eq("stage_number", prev_stage)
+                    .eq("is_latest", True)
+                    .execute()
+                ).data
+                for doc in prev_docs:
+                    collected_regen[doc["filename"]] = _download_from_storage(doc["storage_path"])
+                for filename in meta["input_files"]:
+                    if filename not in collected_regen:
+                        raise RuntimeError(f"Stage {prev_stage} did not produce {filename}")
+
+            for filename, content in collected_regen.items():
+                file_id = _upload_to_anthropic(filename, content)
                 resources.append({
                     "type": "file",
                     "file_id": file_id,

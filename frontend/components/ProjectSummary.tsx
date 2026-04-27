@@ -43,10 +43,11 @@ const STAGE_COLORS = [
   "from-blue-500 to-blue-600",
   "from-indigo-500 to-indigo-600",
   "from-violet-500 to-violet-600",
+  "from-emerald-500 to-emerald-600",
 ];
 
-const STAGE_BG = ["bg-blue-50 border-blue-200", "bg-indigo-50 border-indigo-200", "bg-violet-50 border-violet-200"];
-const STAGE_TEXT = ["text-blue-700", "text-indigo-700", "text-violet-700"];
+const STAGE_BG = ["bg-blue-50 border-blue-200", "bg-indigo-50 border-indigo-200", "bg-violet-50 border-violet-200", "bg-emerald-50 border-emerald-200"];
+const STAGE_TEXT = ["text-blue-700", "text-indigo-700", "text-violet-700", "text-emerald-700"];
 
 function FileIcon({ filename }: { filename: string }) {
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -95,7 +96,7 @@ export default function ProjectSummary({ project, stages, role }: Props) {
   const [approvalDates, setApprovalDates] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    Promise.all([1, 2, 3].map((n) => getStageDocuments(project.id, n))).then((results) => {
+    Promise.all([1, 2, 3, 4].map((n) => getStageDocuments(project.id, n))).then((results) => {
       const map: Record<number, Doc[]> = {};
       results.forEach((docs, i) => {
         map[i + 1] = (docs as Doc[]).filter((d) =>
@@ -105,7 +106,7 @@ export default function ProjectSummary({ project, stages, role }: Props) {
       setAllDocs(map);
     });
 
-    Promise.all([1, 2, 3].map((n) => listApprovals(project.id, n))).then((results) => {
+    Promise.all([1, 2, 3, 4].map((n) => listApprovals(project.id, n))).then((results) => {
       const map: Record<number, string> = {};
       results.forEach((appvs, i) => {
         const approved = (appvs as Record<string, string>[]).find((a) => a.decision === "approved");
@@ -133,7 +134,7 @@ export default function ProjectSummary({ project, stages, role }: Props) {
               <span className="text-emerald-400 text-sm font-semibold">Pipeline Complete</span>
             </div>
             <h2 className="text-2xl font-bold mb-1">{project.name}</h2>
-            <p className="text-slate-400 text-sm">All 3 stages completed successfully</p>
+            <p className="text-slate-400 text-sm">All 4 stages completed successfully</p>
           </div>
           <div className="shrink-0 text-right">
             <p className="text-3xl font-bold text-white">{totalFiles}</p>
@@ -144,7 +145,7 @@ export default function ProjectSummary({ project, stages, role }: Props) {
         {/* Stats row */}
         <div className="relative mt-6 grid grid-cols-3 gap-4">
           {[
-            { label: "Stages Completed", value: `${completedStages.length} / 3` },
+            { label: "Stages Completed", value: `${completedStages.length} / 4` },
             { label: "Completed", value: project.updated_at ? formatDistanceToNow(new Date(project.updated_at), { addSuffix: true }) : "—" },
             { label: "Files Ready", value: String(totalFiles) },
           ].map(({ label, value }) => (
@@ -182,8 +183,8 @@ export default function ProjectSummary({ project, stages, role }: Props) {
       {/* Files by stage */}
       <div>
         <h3 className="font-semibold text-slate-800 mb-3">Generated Files</h3>
-        <div className="grid grid-cols-3 gap-4">
-          {[1, 2, 3].map((n) => {
+        <div className="grid grid-cols-2 gap-4">
+          {[1, 2, 3, 4].map((n) => {
             const stage = stages.find((s) => s.stage_number === n);
             const docs = allDocs[n] ?? [];
             const approvedAt = approvalDates[n];

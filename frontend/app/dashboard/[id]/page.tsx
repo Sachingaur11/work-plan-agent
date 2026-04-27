@@ -39,6 +39,9 @@ export default function ProjectDetailPage() {
   const [verifyingStage, setVerifyingStage] = useState<number | null>(null);
   const [error, setError] = useState("");
 
+  // Approved stage numbers — loaded across all stages so canRunStage works regardless of active tab
+  const [approvedStages, setApprovedStages] = useState<Set<number>>(new Set());
+
   // Version selector state — per stage
   const [stageVersionInfo, setStageVersionInfo] = useState<Record<number, VersionInfo>>({});
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
@@ -80,6 +83,22 @@ export default function ProjectDetailPage() {
       setApprovals(appv);
     } catch {
       // Silently ignore — error already shown by refresh() or action handlers
+    }
+  }, [id]);
+
+  // Load approval status for all stages so canRunStage works regardless of which tab is active
+  const loadAllApprovals = useCallback(async () => {
+    try {
+      const results = await Promise.all([1, 2, 3, 4].map((n) => listApprovals(id, n)));
+      const approved = new Set<number>();
+      results.forEach((appvs, i) => {
+        if ((appvs as Record<string, unknown>[]).some((a) => a.decision === "approved")) {
+          approved.add(i + 1);
+        }
+      });
+      setApprovedStages(approved);
+    } catch {
+      // Silently ignore
     }
   }, [id]);
 
@@ -143,7 +162,8 @@ export default function ProjectDetailPage() {
         }
       }).catch(() => {});
     });
-  }, [refresh, id, startPolling]);
+    loadAllApprovals();
+  }, [refresh, id, startPolling, loadAllApprovals]);
 
   useEffect(() => { refreshStageData(activeStage); }, [activeStage, refreshStageData]);
 
@@ -236,11 +256,8 @@ export default function ProjectDetailPage() {
 
   const canRunStage = (n: number) => {
     if (n === 1) return true;
-    return (stages as Record<string, unknown>[]).some(
-      (s) => s.stage_number === n - 1 && (
-        (approvals as Record<string, unknown>[]).some((a) => a.stage_number === n - 1 && a.decision === "approved")
-      )
-    );
+    const prevStageExists = (stages as Record<string, unknown>[]).some((s) => s.stage_number === n - 1);
+    return prevStageExists && approvedStages.has(n - 1);
   };
 
   const stageIsComplete = activeStageData?.status === "complete";
@@ -275,8 +292,8 @@ export default function ProjectDetailPage() {
         {/* Header actions */}
         {project && (
           <div className="flex items-center gap-2 shrink-0">
-            {/* Summary — always visible once stage 3 has run */}
-            {(stages as Record<string, unknown>[]).some((s) => s.stage_number === 3) && (
+            {/* Summary — always visible once stage 4 has run */}
+            {(stages as Record<string, unknown>[]).some((s) => s.stage_number === 4) && (
               <button
                 onClick={() => router.push(`/dashboard/${id}/summary`)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold transition shadow-sm shadow-blue-500/20"
@@ -384,13 +401,13 @@ export default function ProjectDetailPage() {
                         {runningLabel}
                       </span>
                     )}
-                    {!activeStageData && canRunStage(activeStage) && !stageIsRunning && (
+                    {(!activeStageData || activeStageData?.status === "failed") && canRunStage(activeStage) && !stageIsRunning && (
                       <button
                         onClick={() => handleRunStage(activeStage, false, selectedVersion)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition"
                       >
                         <Play className="w-3.5 h-3.5" />
-                        Run Stage
+                        {activeStageData?.status === "failed" ? "Retry Stage" : "Run Stage"}
                       </button>
                     )}
                     {(activeStageData?.status === "failed" || (activeStageData?.status === "complete" && documents.length === 0)) ? (
@@ -445,6 +462,17 @@ export default function ProjectDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Stage failure reason */}
+          {activeStageData?.status === "failed" && activeStageData?.error_message && (
+            <div className="flex items-start gap-2 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium mb-0.5">Stage failed</p>
+                <p className="text-red-600 font-mono text-xs break-all">{String(activeStageData.error_message)}</p>
+              </div>
+            </div>
+          )}
 
           <DocumentViewer
             documents={documents as never[]}
@@ -508,10 +536,9 @@ export default function ProjectDetailPage() {
                   stageNumber={activeStage}
                   currentDecision={effectiveDecision}
                   onDecision={async (decision: string) => {
-                    await refresh();
-                    await refreshStageData(activeStage);
+                    await Promise.all([refresh(), refreshStageData(activeStage), loadAllApprovals()]);
                     if (decision === "approved") {
-                      if (activeStage < 3) {
+                      if (activeStage < 4) {
                         setActiveStage(activeStage + 1);
                       } else {
                         router.push(`/dashboard/${id}/summary`);

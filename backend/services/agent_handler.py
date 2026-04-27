@@ -17,6 +17,7 @@ _config: dict[int, list[int]] = {
     1: [1],
     2: [1],
     3: [1],
+    4: [1],
 }
 
 
@@ -27,8 +28,8 @@ def get_available_versions(stage_number: int) -> list[int]:
 
 def enable_version(stage_number: int, version: int) -> None:
     """Mark a version as available for a stage."""
-    if stage_number not in (1, 2, 3):
-        raise ValueError("stage_number must be 1, 2, or 3")
+    if stage_number not in (1, 2, 3, 4):
+        raise ValueError("stage_number must be 1, 2, 3, or 4")
     if not (1 <= version <= MAX_VERSIONS):
         raise ValueError(f"Version must be between 1 and {MAX_VERSIONS}")
     bucket = _config.setdefault(stage_number, [])
@@ -58,5 +59,5 @@ def get_all_stage_versions() -> dict[int, dict]:
             "available": sorted(_config.get(stage, [])),
             "max_versions": MAX_VERSIONS,
         }
-        for stage in (1, 2, 3)
+        for stage in (1, 2, 3, 4)
     }
