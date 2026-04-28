@@ -2,6 +2,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   getProject, getProjectStages, getStageDocuments, listFeedback,
   listApprovals, runPipeline, verifyDownload, getAgentVersions, deleteProject,
@@ -18,15 +20,42 @@ import StageChat from "@/components/StageChat";
 import { STATUS_LABELS, STATUS_COLORS, STAGE_NAMES } from "@/lib/utils";
 import { ArrowLeft, Play, RotateCcw, Loader2, AlertCircle, ShieldCheck, RefreshCw, Pencil, Trash2, LayoutList, Sparkles, MessageSquare } from "lucide-react";
 import Link from "next/link";
+import RunTimer from "@/components/RunTimer";
 
 interface VersionInfo {
   available: number[];
   max_versions: number;
 }
 
+interface StageData {
+  id?: string;
+  stage_number?: number;
+  status: string;
+  version?: number;
+  agent_version?: number | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  session_id?: string | null;
+}
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
+
+  // ── React Query: seed local state from cache instantly on navigation ──
+  const { data: cachedProject } = useQuery({
+    queryKey: ["project", id],
+    queryFn: () => getProject(id),
+    staleTime: 20_000,
+  });
+  const { data: cachedStages } = useQuery({
+    queryKey: ["stages", id],
+    queryFn: () => getProjectStages(id),
+    staleTime: 5_000,
+  });
+
   const [project, setProject] = useState<Record<string, unknown> | null>(null);
   const [stages, setStages] = useState<Record<string, unknown>[]>([]);
   const [activeStage, setActiveStage] = useState(1);
@@ -61,15 +90,24 @@ export default function ProjectDetailPage() {
 
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Seed local state from React Query cache as soon as it's available
+  // so the page renders instantly on repeat visits
+  useEffect(() => { if (cachedProject) setProject(cachedProject as Record<string, unknown>); }, [cachedProject]);
+  useEffect(() => { if (cachedStages)  setStages(cachedStages  as Record<string, unknown>[]); }, [cachedStages]);
+
   const refresh = useCallback(async () => {
     try {
       const [proj, stgs] = await Promise.all([getProject(id), getProjectStages(id)]);
       setProject(proj);
       setStages(stgs);
+      queryClient.setQueryData(["project", id], proj);
+      queryClient.setQueryData(["stages",  id], stgs);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to connect to the API. Is the backend running?");
+      const msg = err instanceof Error ? err.message : "Failed to connect to the API. Is the backend running?";
+      setError(msg);
+      toast.error(msg);
     }
-  }, [id]);
+  }, [id, queryClient]);
 
   const refreshStageData = useCallback(async (stage: number) => {
     try {
@@ -146,6 +184,11 @@ export default function ProjectDetailPage() {
         setRunningStage(null);
         setVerifyingStage(null);
         refreshStageData(stage);
+        if (latestStage?.status === "complete") {
+          toast.success(`Stage ${stage} complete — outputs ready`);
+        } else {
+          toast.error(`Stage ${stage} failed`, { description: String(latestStage?.error_message ?? "") });
+        }
       }
     }, 5000);
   }, [id, refreshStageData]);
@@ -194,9 +237,12 @@ export default function ProjectDetailPage() {
     const fromVersion = currentVersionFor(stage);
     try {
       await verifyDownload(id, stage);
+      toast.info("Verifying download…");
       startPolling(stage, fromVersion);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      toast.error(msg);
       setVerifyingStage(null);
     }
   }
@@ -208,9 +254,12 @@ export default function ProjectDetailPage() {
     const fromVersion = currentVersionFor(stage);
     try {
       await runPipeline(id, stage, rerun, version ?? undefined);
+      toast.success(rerun ? `Re-running Stage ${stage}…` : `Stage ${stage} started`);
       startPolling(stage, fromVersion);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      toast.error(msg);
       setRunningStage(null);
     }
   }
@@ -223,9 +272,13 @@ export default function ProjectDetailPage() {
     setDeleteState("deleting");
     try {
       await deleteProject(id);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project deleted");
       router.push("/dashboard");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      toast.error(msg);
       setDeleteState("idle");
     }
   }
@@ -238,7 +291,7 @@ export default function ProjectDetailPage() {
     const n = s.stage_number as number;
     if (!(n in stageMap)) stageMap[n] = s;
   }
-  const activeStageData = stageMap[activeStage] as Record<string, unknown> | undefined;
+  const activeStageData = stageMap[activeStage] as unknown as StageData | undefined;
   const latestApproval = (approvals as Record<string, unknown>[])[0];
 
   // An approval is stale when it was created before the current stage version started
@@ -444,6 +497,14 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
+            {/* Timer bar — shown while stage is running */}
+            {stageIsRunning && (
+              <RunTimer
+                startedAt={activeStageData?.started_at}
+                className="mt-1"
+              />
+            )}
+
             {/* Bottom row: agent version selector (non-client, non-running) */}
             {role !== "client" && !stageIsRunning && (
               <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
@@ -572,7 +633,7 @@ export default function ProjectDetailPage() {
           }}
           onClose={() => setEditOpen(false)}
           onSaved={(updated) => {
-            setProject(updated as Record<string, unknown>);
+            setProject(updated as unknown as Record<string, unknown>);
           }}
         />
       )}

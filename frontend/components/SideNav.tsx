@@ -35,7 +35,7 @@ export default function SideNav({ role, fullName }: Props) {
         <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
           <Sparkles className="w-4 h-4" />
         </div>
-        <span className="font-semibold text-sm leading-tight">Presale Agent</span>
+        <span className="font-semibold text-sm leading-tight">Presale Dashboard</span>
       </div>
 
       {/* Nav */}

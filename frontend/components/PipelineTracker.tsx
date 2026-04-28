@@ -1,12 +1,14 @@
 "use client";
-import { CheckCircle2, Circle, Loader2, XCircle, AlertCircle } from "lucide-react";
+import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import RunTimer from "@/components/RunTimer";
 
 interface Stage {
   stage_number: number;
   stage_name: string;
   status: string;
   version: number;
+  started_at?: string | null;
 }
 
 interface Props {
@@ -36,24 +38,25 @@ export default function PipelineTracker({ stages, activeStage, onStageClick }: P
   return (
     <div className="flex items-center gap-0">
       {[1, 2, 3, 4].map((n, i) => {
-        const stage = stageMap[n];
-        const status = stage?.status ?? "pending";
-        const active = activeStage === n;
+        const stage   = stageMap[n];
+        const status  = stage?.status ?? "pending";
+        const active  = activeStage === n;
         const version = stage?.version ?? 1;
+        const isRunning = status === "running";
 
         return (
           <div key={n} className="flex items-center">
             <button
               onClick={() => onStageClick(n)}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-xl transition group",
-                active
-                  ? "bg-blue-50 border border-blue-200"
-                  : "hover:bg-slate-50"
+                "flex items-start gap-3 px-4 py-3 rounded-xl transition group",
+                active ? "bg-blue-50 border border-blue-200" : "hover:bg-slate-50"
               )}
             >
-              <StageIcon status={status} />
-              <div className="text-left">
+              <div className="mt-0.5">
+                <StageIcon status={status} />
+              </div>
+              <div className="text-left min-w-0">
                 <p className={cn("text-sm font-semibold", active ? "text-blue-700" : "text-slate-700")}>
                   Stage {n}
                   {version > 1 && (
@@ -61,10 +64,22 @@ export default function PipelineTracker({ stages, activeStage, onStageClick }: P
                   )}
                 </p>
                 <p className="text-xs text-slate-500">{STAGE_NAMES[n - 1]}</p>
+
+                {/* Compact timer bar inside the running stage */}
+                {isRunning && (
+                  <RunTimer
+                    startedAt={stage?.started_at}
+                    compact
+                    className="mt-1.5 w-28"
+                  />
+                )}
               </div>
             </button>
             {i < 3 && (
-              <div className={cn("w-8 h-0.5 mx-1", status === "complete" ? "bg-emerald-300" : "bg-slate-200")} />
+              <div className={cn(
+                "w-8 h-0.5 mx-1 shrink-0",
+                status === "complete" ? "bg-emerald-300" : "bg-slate-200"
+              )} />
             )}
           </div>
         );

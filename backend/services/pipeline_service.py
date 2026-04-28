@@ -374,10 +374,13 @@ def run_stage(
             feedback_block += "\n".join(f"- {c}" for c in feedback_comments)
             message = message + feedback_block
 
-        # Run the agent session (optionally pinned to a specific version)
+        # Run the agent session (optionally pinned to a specific version).
+        # Title encodes enough info to trace this session back to the DB row:
+        #   pipeline_stages WHERE id = <stage_id>  OR
+        #   pipeline_stages WHERE project_id = <project_id> AND stage_number = <n> AND version = <v>
         session_id = _run_session(
             agent_id=agent_id,
-            title=f"{meta['title']}-v{version}",
+            title=f"{meta['title']} | proj:{project_id[:8]} s{stage_number} v{version} | db:{stage_id[:8]}",
             message=message,
             resources=resources,
             agent_version=agent_version,
@@ -579,7 +582,7 @@ def regenerate_files(
 
         session_id = _run_session(
             agent_id=agent_id,
-            title=f"{meta['title']}-regen-v{version}",
+            title=f"{meta['title']}-regen | proj:{project_id[:8]} s{stage_number} v{version} | db:{stage_id[:8]}",
             message=message,
             resources=resources,
             agent_version=agent_version,

@@ -64,6 +64,7 @@ Run migrations in order in the Supabase SQL editor:
 1. `supabase/migrations/001_init.sql` — all base tables, RLS policies
 2. `supabase/migrations/002_agent_versioning.sql` — adds `agent_version INTEGER` column to `pipeline_stages`
 3. `supabase/migrations/003_stage4_support.sql` — widens `stage_number` CHECK from `(1,2,3)` to `(1,2,3,4)`
+4. `supabase/migrations/004_agent_version_config.sql` — `agent_version_config` table persisting admin-enabled versions; seeds V1 for all stages
 
 Create a Supabase Storage bucket named **`presale-outputs`** (private).
 
@@ -101,17 +102,21 @@ Each stage can be re-run with feedback injected; each re-run creates a new versi
 
 Individual files (any type) can be regenerated without re-running the whole stage via `regenerate_files()` — a modal always opens for instructions before any regeneration starts.
 
+`STAGE_META` dict in `pipeline_service.py` is the single source of truth for each stage: agent env-var name, expected output filenames, which filenames are context files, and which files to mount as inputs (Stage 4 uses `input_stages` to pull from two prior stages). Add a new stage here first before touching any router or frontend code.
+
 ### Key Backend Files
 
 - `backend/services/pipeline_service.py` — core pipeline logic. Entry points: `run_stage(project_id, stage_number, feedback_comments, agent_version)` and `regenerate_files(project_id, stage_number, file_names, instructions, agent_version)`. `_run_session()` breaks on any terminal status event (`session.status_idle`, `session.status_error`, `session.status_terminated`, `session.status_complete`) and swallows stream exceptions — the download step validates actual output. Post-download validates expected filenames were produced before marking complete.
-- `backend/services/agent_handler.py` — **in-memory** agent version availability config per stage. Resets on server restart (not persisted yet). Default: only V1 enabled for all stages; max 5 versions per stage.
+- `backend/services/agent_handler.py` — agent version availability config per stage, **persisted in the `agent_version_config` DB table** (migration `004`). Changes survive server restarts and apply globally. Default: only V1 enabled for all stages; max 5 versions per stage.
 - `backend/routers/pipeline.py` — background task triggers for `run_stage` / `regenerate_files`; SSE endpoint for live status; `POST /{id}/stages/{n}/verify-download` re-downloads files from an existing Anthropic session (accepts optional `session_id` body to recover sessions where the ID wasn't saved due to early failure); `GET /agents/versions`.
 - `backend/routers/projects.py` — CRUD for projects including `PATCH /{id}` (partial update, `exclude_unset=True`) and `DELETE /{id}` (deletes Storage files from documents table paths, then cascades through all child tables in dependency order).
 - `backend/routers/admin.py` — user management + `GET/POST/DELETE /admin/agents/stages/{stage}/versions/{version}` for version gating.
 - `backend/routers/chat.py` — `POST /projects/{id}/chat` streaming SSE endpoint. Builds a rich system prompt by parallel-fetching project, stages, documents, approvals, and feedback from Supabase; downloads `.md`/`.json` doc contents (truncated at 4000 chars); streams Claude (`claude-sonnet-4-6`) responses as `{"text": "..."}` SSE events, terminated by `[DONE]`.
+- `backend/routers/feedback.py` — `POST/GET /projects/{id}/stages/{n}/feedback` (adds/lists feedback enriched with author name); `PATCH /feedback/{id}/resolve`.
 - `backend/routers/approvals.py` — `POST/GET /projects/{id}/stages/{n}/approve`; updates project status on approval (stage 3 approved → `complete`).
 - `backend/routers/files.py` — `GET /documents/{id}/download` returns signed URL; blocks clients from downloading context files.
-- `backend/app.py` — JWT auth middleware attaches `user_id` + `user_role` to `request.state`; CORS.
+- `backend/services/supabase_client.py` — singleton `get_supabase()` factory; used by all routers and services.
+- `backend/app.py` — JWT auth middleware attaches `user_id` + `user_role` to `request.state`; CORS. `FRONTEND_URL` may be comma-separated for multiple origins.
 - `backend/models.py` — all Pydantic schemas. `VerifyDownloadRequest` has optional `session_id` for manual recovery.
 
 ### Key Frontend Files
@@ -135,6 +140,9 @@ Individual files (any type) can be regenerated without re-running the whole stag
 - `frontend/app/client/[projectId]/page.tsx` — read-only client portal; shows only approved-stage documents; uses `ClientDownloads` for file access. Clients cannot see context files.
 - `frontend/lib/supabase/client.ts` + `server.ts` — browser and server Supabase client factories (Next.js App Router split).
 - `frontend/lib/utils.ts` — shared constants: `STATUS_LABELS` (display names), `STATUS_COLORS` (Tailwind badge classes), `STAGE_NAMES` (stage number → title map), and the `cn()` Tailwind merge helper.
+- `frontend/components/FeedbackThread.tsx` — inline comment thread per stage; allows adding new feedback and resolving existing items.
+- `frontend/components/PipelineTracker.tsx` — top progress bar showing stage statuses; clicking a stage tab updates `activeStage`.
+- `frontend/components/ProjectSummary.tsx` — renders the `/summary` page body with all stage-4 role-plan documents side-by-side.
 
 ### User Roles
 
