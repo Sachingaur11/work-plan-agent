@@ -13,12 +13,11 @@ import PipelineTracker from "@/components/PipelineTracker";
 import DocumentViewer from "@/components/DocumentViewer";
 import FeedbackThread from "@/components/FeedbackThread";
 import ApprovalBar from "@/components/ApprovalBar";
-import AgentVersionSelector from "@/components/AgentVersionSelector";
 import RegenerateModal from "@/components/RegenerateModal";
 import EditProjectModal from "@/components/EditProjectModal";
 import StageChat from "@/components/StageChat";
 import { STATUS_LABELS, STATUS_COLORS, STAGE_NAMES } from "@/lib/utils";
-import { ArrowLeft, Play, RotateCcw, Loader2, AlertCircle, ShieldCheck, RefreshCw, Pencil, Trash2, LayoutList, Sparkles, MessageSquare } from "lucide-react";
+import { ArrowLeft, Play, RotateCcw, Loader2, AlertCircle, ShieldCheck, RefreshCw, Pencil, Trash2, LayoutList, Sparkles, MessageSquare, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import RunTimer from "@/components/RunTimer";
 
@@ -71,9 +70,11 @@ export default function ProjectDetailPage() {
   // Approved stage numbers — loaded across all stages so canRunStage works regardless of active tab
   const [approvedStages, setApprovedStages] = useState<Set<number>>(new Set());
 
-  // Version selector state — per stage
+  // Transcript viewer panel
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+
+  // Version info — used by RegenerateModal
   const [stageVersionInfo, setStageVersionInfo] = useState<Record<number, VersionInfo>>({});
-  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
 
   // Regeneration modal state
   const [regenModal, setRegenModal] = useState<{
@@ -157,11 +158,6 @@ export default function ProjectDetailPage() {
       setStageVersionInfo(info as Record<number, VersionInfo>);
     }).catch(() => {});
   }, []);
-
-  // Reset version selection when switching stages
-  useEffect(() => {
-    setSelectedVersion(null);
-  }, [activeStage]);
 
   // Poll every 5s while a stage is running.
   // fromVersion: the latest version that existed BEFORE this action was triggered.
@@ -402,13 +398,62 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Pipeline tracker */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm px-6 py-4 mb-6">
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm px-6 py-4 mb-4">
         <PipelineTracker
           stages={stages as never[]}
           activeStage={activeStage}
           onStageClick={setActiveStage}
         />
       </div>
+
+      {/* Discovery Transcript viewer — only relevant for Stage 1 */}
+      {project && activeStage === 1 && (
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm mb-6 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setTranscriptOpen((v) => !v)}
+            className="w-full flex items-center gap-2.5 px-6 py-3.5 text-left hover:bg-slate-50/60 transition"
+          >
+            <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+            <span className="text-sm font-semibold text-slate-700">Discovery Transcript</span>
+            {project.transcript ? (
+              <span className="text-xs text-slate-400 font-normal">
+                {(String(project.transcript).length).toLocaleString()} chars
+              </span>
+            ) : (
+              <span className="text-xs text-slate-400 font-normal italic">no transcript attached</span>
+            )}
+            <div className="ml-auto flex items-center gap-3">
+              {role !== "client" && (
+                <span
+                  role="button"
+                  onClick={(e) => { e.stopPropagation(); setEditOpen(true); }}
+                  className="text-xs text-blue-600 hover:text-blue-700 hover:underline font-medium"
+                >
+                  Edit
+                </span>
+              )}
+              {transcriptOpen
+                ? <ChevronUp  className="w-4 h-4 text-slate-400" />
+                : <ChevronDown className="w-4 h-4 text-slate-400" />
+              }
+            </div>
+          </button>
+          {transcriptOpen && (
+            <div className="border-t border-slate-100 px-6 py-4">
+              {project.transcript ? (
+                <pre className="text-xs text-slate-600 font-mono leading-relaxed whitespace-pre-wrap bg-slate-50 rounded-xl p-4 max-h-72 overflow-y-auto editor-scroll">
+                  {String(project.transcript)}
+                </pre>
+              ) : (
+                <p className="text-sm text-slate-400 italic py-2">
+                  No transcript available. Click <button onClick={() => setEditOpen(true)} className="text-blue-600 hover:underline not-italic">Edit</button> to add one.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 flex items-center gap-2 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
@@ -456,7 +501,7 @@ export default function ProjectDetailPage() {
                     )}
                     {(!activeStageData || activeStageData?.status === "failed") && canRunStage(activeStage) && !stageIsRunning && (
                       <button
-                        onClick={() => handleRunStage(activeStage, false, selectedVersion)}
+                        onClick={() => handleRunStage(activeStage, false)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition"
                       >
                         <Play className="w-3.5 h-3.5" />
@@ -475,7 +520,7 @@ export default function ProjectDetailPage() {
                     ) : null}
                     {stageIsComplete && effectiveDecision === "revision_requested" && !stageIsRunning && (
                       <button
-                        onClick={() => handleRunStage(activeStage, true, selectedVersion)}
+                        onClick={() => handleRunStage(activeStage, true)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium transition"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
@@ -505,23 +550,6 @@ export default function ProjectDetailPage() {
               />
             )}
 
-            {/* Bottom row: agent version selector (non-client, non-running) */}
-            {role !== "client" && !stageIsRunning && (
-              <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
-                <AgentVersionSelector
-                  availableVersions={currentVersionInfo.available}
-                  maxVersions={currentVersionInfo.max_versions}
-                  selectedVersion={selectedVersion}
-                  onSelect={setSelectedVersion}
-                  disabled={stageIsRunning}
-                />
-                {selectedVersion !== null && (
-                  <span className="text-xs text-indigo-600 font-medium">
-                    · next run will use V{selectedVersion}
-                  </span>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Stage failure reason */}
@@ -543,6 +571,7 @@ export default function ProjectDetailPage() {
                 ? (filename) => openRegenModal([filename])
                 : undefined
             }
+            onFileSaved={() => refreshStageData(activeStage)}
           />
         </div>
 

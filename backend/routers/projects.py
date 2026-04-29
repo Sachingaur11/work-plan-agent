@@ -81,7 +81,15 @@ async def get_project(project_id: str, request: Request):
     result = sb.table("projects").select("*").eq("id", project_id).single().execute()
     if not result.data:
         raise HTTPException(404, "Project not found")
-    return result.data
+    data = dict(result.data)
+    # If the transcript was uploaded as a file (not pasted), resolve it to text now
+    if not data.get("transcript") and data.get("transcript_file_path"):
+        try:
+            raw = sb.storage.from_(BUCKET).download(data["transcript_file_path"])
+            data["transcript"] = raw.decode("utf-8", errors="replace")
+        except Exception:
+            pass  # leave transcript as None if download fails
+    return data
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

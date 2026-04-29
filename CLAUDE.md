@@ -74,7 +74,7 @@ Create a Supabase Storage bucket named **`presale-outputs`** (private).
 
 ## Architecture
 
-This is a **full-stack presales pipeline dashboard** — a 3-stage AI agent pipeline wrapped in a web app with role-based access, versioned documents, inline feedback, approval workflows, and admin-controlled agent version pinning.
+This is a **full-stack presales pipeline dashboard** — a 4-stage AI agent pipeline wrapped in a web app with role-based access, versioned documents, inline feedback, approval workflows, and admin-controlled agent version pinning.
 
 ### Tech Stack
 - **Backend**: FastAPI (Python), Supabase service-role client
@@ -184,7 +184,7 @@ curl -X POST .../stages/3/verify-download \
 ### Agent Version Pinning Flow
 
 1. Admin enables V2 for Stage 2 via `POST /admin/agents/stages/2/versions/2/enable`
-2. `agent_handler._config[2]` becomes `[1, 2]` (in-memory; resets on restart)
+2. `agent_version_config` DB row is upserted for `(stage=2, version=2)` — persists across restarts
 3. Frontend fetches `GET /agents/versions` → `AgentVersionSelector` renders V1 and V2
 4. User selects V2 → passed to `runPipeline()` or `regenerateFiles()`
 5. `_run_session()` creates session with version-pinned agent resource

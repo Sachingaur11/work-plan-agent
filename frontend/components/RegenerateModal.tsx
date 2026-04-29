@@ -19,6 +19,8 @@ interface Props {
   availableVersions: number[];
   /** Pre-selected filenames (e.g. when opened from a per-doc button) */
   preselectedFiles?: string[];
+  /** Show the agent version picker — admins only */
+  showVersionSelector?: boolean;
   onClose: () => void;
   onRegenerated: () => void;
 }
@@ -36,6 +38,7 @@ export default function RegenerateModal({
   documents,
   availableVersions,
   preselectedFiles = [],
+  showVersionSelector = false,
   onClose,
   onRegenerated,
 }: Props) {
@@ -169,18 +172,20 @@ export default function RegenerateModal({
               />
             </div>
 
-            {/* Agent version */}
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Agent version <span className="text-slate-400 font-normal">(optional)</span>
-              </label>
-              <AgentVersionSelector
-                availableVersions={availableVersions}
-                selectedVersion={agentVersion}
-                onSelect={setAgentVersion}
-                disabled={submitting}
-              />
-            </div>
+            {/* Agent version — admin only */}
+            {showVersionSelector && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Agent version <span className="text-slate-400 font-normal">(optional)</span>
+                </label>
+                <AgentVersionSelector
+                  availableVersions={availableVersions}
+                  selectedVersion={agentVersion}
+                  onSelect={setAgentVersion}
+                  disabled={submitting}
+                />
+              </div>
+            )}
 
             {error && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">

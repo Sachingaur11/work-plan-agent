@@ -29,6 +29,8 @@ class ProjectResponse(BaseModel):
     created_by: Optional[str]
     created_at: datetime
     updated_at: datetime
+    transcript: Optional[str] = None
+    transcript_file_path: Optional[str] = None
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────

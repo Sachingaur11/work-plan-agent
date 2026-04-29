@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
-import { Download, FileText, Sheet, FileJson, Loader2, RefreshCw } from "lucide-react";
+import { Download, FileText, Sheet, FileJson, Loader2, RefreshCw, Pencil } from "lucide-react";
 import { getDownloadUrl } from "@/lib/api";
+import FileEditorModal from "@/components/FileEditorModal";
 
 interface Document {
   id: string;
@@ -15,6 +16,8 @@ interface Props {
   role: string;
   /** Called when the user clicks the per-doc regenerate button */
   onRegenerateFile?: (filename: string) => void;
+  /** Called after a file is saved via the editor (triggers a refresh) */
+  onFileSaved?: () => void;
 }
 
 function FileIcon({ filename }: { filename: string }) {
@@ -28,11 +31,15 @@ function FileIcon({ filename }: { filename: string }) {
 function DownloadCard({
   doc,
   showRegenerate,
+  showEdit,
   onRegenerate,
+  onEdit,
 }: {
   doc: Document;
   showRegenerate: boolean;
+  showEdit: boolean;
   onRegenerate?: () => void;
+  onEdit?: () => void;
 }) {
   const [loading, setLoading] = useState(false);
 
@@ -76,6 +83,18 @@ function DownloadCard({
         </div>
       </button>
 
+      {/* Edit button */}
+      {showEdit && onEdit && (
+        <button
+          onClick={onEdit}
+          title={`Edit ${doc.filename}`}
+          className="p-2.5 rounded-xl border border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition shrink-0"
+        >
+          <Pencil className="w-4 h-4" />
+        </button>
+      )}
+
+      {/* Regenerate button */}
       {showRegenerate && onRegenerate && (
         <button
           onClick={onRegenerate}
@@ -89,12 +108,16 @@ function DownloadCard({
   );
 }
 
-export default function DocumentViewer({ documents, role, onRegenerateFile }: Props) {
+export default function DocumentViewer({ documents, role, onRegenerateFile, onFileSaved }: Props) {
+  const [editingDoc, setEditingDoc] = useState<Document | null>(null);
+
   const visible = role === "client"
     ? documents.filter((d) => !d.is_context_file)
     : documents;
 
   const showRegenerate = role !== "client" && !!onRegenerateFile;
+  // Edit is available to presales and admin, on all file types
+  const showEdit = role !== "client";
 
   if (!visible.length) {
     return (
@@ -107,21 +130,37 @@ export default function DocumentViewer({ documents, role, onRegenerateFile }: Pr
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100">
-        <p className="text-sm font-semibold text-slate-700">Generated Files</p>
-        <p className="text-xs text-slate-400 mt-0.5">{visible.length} file{visible.length !== 1 ? "s" : ""} available</p>
+    <>
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <p className="text-sm font-semibold text-slate-700">Generated Files</p>
+          <p className="text-xs text-slate-400 mt-0.5">{visible.length} file{visible.length !== 1 ? "s" : ""} available</p>
+        </div>
+        <div className="p-4 space-y-2">
+          {visible.map((doc) => (
+            <DownloadCard
+              key={doc.id}
+              doc={doc}
+              showRegenerate={showRegenerate}
+              showEdit={showEdit}
+              onRegenerate={() => onRegenerateFile?.(doc.filename)}
+              onEdit={() => setEditingDoc(doc)}
+            />
+          ))}
+        </div>
       </div>
-      <div className="p-4 space-y-2">
-        {visible.map((doc) => (
-          <DownloadCard
-            key={doc.id}
-            doc={doc}
-            showRegenerate={showRegenerate}
-            onRegenerate={() => onRegenerateFile?.(doc.filename)}
-          />
-        ))}
-      </div>
-    </div>
+
+      {/* File editor modal */}
+      {editingDoc && (
+        <FileEditorModal
+          doc={editingDoc}
+          onClose={() => setEditingDoc(null)}
+          onSaved={() => {
+            setEditingDoc(null);
+            onFileSaved?.();
+          }}
+        />
+      )}
+    </>
   );
 }

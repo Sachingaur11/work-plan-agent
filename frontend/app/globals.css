@@ -74,6 +74,17 @@
   @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent animate-shimmer;
 }
 
+/* File editor — always-visible light scrollbars (spreadsheet & preview pane) */
+.editor-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+.editor-scroll::-webkit-scrollbar          { width: 10px; height: 10px; }
+.editor-scroll::-webkit-scrollbar-track    { background: #f1f5f9; border-radius: 0; }
+.editor-scroll::-webkit-scrollbar-thumb    { background: #cbd5e1; border-radius: 5px; border: 2px solid #f1f5f9; }
+.editor-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.editor-scroll::-webkit-scrollbar-corner   { background: #f1f5f9; }
+
 /* Page transitions */
 @keyframes page-in {
   from { opacity: 0; transform: translateY(10px); }

@@ -125,6 +125,29 @@ export async function getDownloadUrl(documentId: string): Promise<{ url: string;
   return apiFetch(`/documents/${documentId}/download`);
 }
 
+export async function fetchDocumentContent(documentId: string): Promise<ArrayBuffer> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/documents/${documentId}/content`, { headers });
+  if (!res.ok) throw new Error(await res.text() || res.statusText);
+  return res.arrayBuffer();
+}
+
+export async function updateDocumentContent(
+  documentId: string,
+  content: Blob,
+  filename: string,
+): Promise<void> {
+  const headers = await getAuthHeaders();
+  const form = new FormData();
+  form.append("file", content, filename);
+  const res = await fetch(`${API_BASE}/documents/${documentId}/content`, {
+    method: "PUT",
+    headers,
+    body: form,
+  });
+  if (!res.ok) throw new Error(await res.text() || res.statusText);
+}
+
 // ── Feedback ──────────────────────────────────────────────────────────────────
 
 export async function listFeedback(projectId: string, stage: number) {
